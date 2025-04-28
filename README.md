@@ -9,3 +9,7 @@ Due to license restrictions, the raw dataset corresponding to the application in
 All necessary custom functions are in the lib folder. When running the code, please add the command:  
 
 `addpath(genpath('.'));`
+
+The simulations contain following  parts:
+1. similarity: lambda varies given similarity with level of $\pi/3$, $\pi/4$, $\pi/8$  
+2. sign-flip probability 
