@@ -11,5 +11,9 @@ All necessary custom functions are in the lib folder. When running the code, ple
 `addpath(genpath('.'));`
 
 The simulations contain following  parts:
-1. similarity: lambda varies given similarity with level of $\pi/3$, $\pi/4$, $\pi/8$  
-2. sign-flip probability 
+1. similarity: lambda varies,  given similarity with level of $\pi/3$, $\pi/4$, $\pi/8$.
+2. sign-flip probability.
+3. Noise variance.
+4. Local sample size distribution: The parameter of Dirichlet distribution varies.
+5. Varying local sample size with fixed number of nodes.
+6. Varying number of nodes with fixed local sample size.
