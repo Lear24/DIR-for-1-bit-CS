@@ -1,0 +1,147 @@
+function [W_eastimated,beta_estimated,objective_value]=...
+    onebitCS_invex_gd(beta_initial,X_cell,Y_cell,m,n,d,T_max,K_max,lambda)
+% [W_eastimated,objective_value,L2_error]=onebitCS_invex_gd(beta_initial,X,Y,m,n,d,T_max,K_max,lambda)
+%
+% Optimalize (A) in distributed setting.
+%
+% beta_initial: (m×d) the coefficient in vector form on *all* clients.
+% X_cell: (m×1)cell with (n×d)
+% Y_cell: (m×1)cell with (n×1)
+%
+% m: number of clinet
+% n: (m×1) vector. The sample size on each clients is different.
+% d: dimension.
+%
+% T_max: The max iteration of conmunication round.
+% K_max: The max iteration locally.
+%
+% lambda: given regularization parameter
+%
+% W_eastimated: The final estimated coefficient of (W) in form of matrix.
+% beta_estimated: The final estimated coefficient of (O) in form of vector.
+% objective_value: Record the objective value in each conmunication round.
+%
+% L2_error: The average L2 error in the conmunication round - in real-parameter version
+% Pred_error: The average predict error in the conmunication round - in warming-up version
+%
+
+
+% The initial part --------------------------------------------------------
+[~,I2] = util_matrix_I(d);
+
+% Given the initialization of (A)
+beta_cell=mat2cell(beta_initial,repelem(1,m));
+[W_eastimated,~]=util_O2W_cell(beta_cell,m,d); %record the estimated W
+U = generate_transfer_U(W_eastimated,m,d); %record the transmitting vector U
+
+% (m×1), record the cost function on each client.
+cost_all_client=zeros(m,1);
+% (T_max×1), record the cost function on each client.
+objective_value = zeros(T_max+1,1);
+
+%The initial objevtive function valiue ------------------------------------
+for i = 1:m
+    X_i=cell2mat(X_cell(i));
+    Y_i=cell2mat(Y_cell(i));
+    
+    initial_params = util_W2A(cell2mat(W_eastimated(i)),d);
+    [W1,L1] = util_A2W(initial_params,d);
+    u = trace(L1'*L1)-1;
+    U_i =  U - I2*W1*I2/u;
+    
+    cost_all_client(i)=objective_invex_A(initial_params,U_i,X_i,Y_i,m,n(i),d,lambda);
+end
+objective_value(1) = sum(abs(cost_all_client));
+disp(objective_value(1));
+% The conmunication round -------------------------------------------------
+for T=1:T_max
+    W = W_eastimated;
+    cost_temp=zeros(m,1);
+    U = generate_transfer_U(W_eastimated,m,d); %U: transmission from server to clients.
+    alpha = 0.005;
+    % the client part -----------------------------------------------------
+    for m_i=1:m
+        
+        
+        X_i=cell2mat(X_cell(m_i));
+        Y_i=cell2mat(Y_cell(m_i));
+        n_i = n(m_i);
+        initial_params = util_W2A(cell2mat(W(m_i)),d);
+        [W1,L1] = util_A2W(initial_params,d);
+        u = trace(L1'*L1)-1;
+        U_i =  U - I2*W1*I2/u;
+        
+        cost = cost_all_client(i);
+        
+        % optimalization part on local client------------------------------
+        for K = 1:K_max
+            [~ ,grad]= objective_invex_A(initial_params,U_i,X_i,Y_i,m,n_i,d,lambda);
+            obparams = initial_params - alpha*grad;
+            
+            %             % 本地异步
+            %             [J, ~] = objective_invex_A(obparams,U_i,X_i,Y_i,m,n_i,d,lambda);
+            %             if   J - cost > 0.1
+            %                 fprintf('本地客户端梯度下降上升,轮次T = %d, 客户端%d, 轮次K = %d,  \n',T,m,K);
+            %                 obparams = initial_params;
+            %                 break;
+            %             else
+            %                 % continue loop-----------
+            %                 initial_params = obparams;
+            %                 cost = J;
+            %             end
+            
+            % 本地同步
+            initial_params = obparams;           
+        end
+        [J, ~] = objective_invex_A(obparams,U_i,X_i,Y_i,m,n_i,d,lambda);
+        cost = J;
+        % feadback the optimalization result on local client---------------
+        [W_temp,~] = util_A2W(obparams,d);
+        W(m_i)=mat2cell(W_temp,d+1); %record the (W) on client i
+        cost_temp(m_i)=cost(end); %record the objective function value on client i
+        
+    end
+    
+    
+    
+    % At the server, Broadcast the value of the objective function---------
+    if  mod(T,100)==0
+        fprintf('在轮次%d时, 目标函数值cost为 %f \n',T,sum(cost_temp));
+    end
+    % At the server, determine whether to exit the loop--------------------
+    if abs(sum(cost_temp)-sum(cost_all_client))<10^(-6)
+        fprintf('在轮次%d时, 目标函数值cost为 %f \n',T,sum(cost_temp));
+        fprintf('算法收敛,总共通讯了%d轮\n',T);
+        W_eastimated = W; % 算法收敛, 记录最终的估计值
+        objective_value(T+1:end) = sum(abs(cost_temp));% 算法收敛, 记录最终的目标函数值
+        break;
+    elseif sum(cost_temp)-sum(cost_all_client)>0.1*sum(cost_all_client)
+        fprintf('损失函数增加,算法收敛,总共通讯了%d轮\n',T);
+        fprintf('在轮次%d时, 目标函数值cost为 %f \n',T,sum(cost_temp));
+        objective_value(T+1:end) = sum(abs(cost_temp));
+        break;
+    else
+        % continue loop-----------
+        W_eastimated = W;
+        cost_all_client=cost_temp;
+        objective_value(T+1) = sum(abs(cost_all_client)); % record objective function value
+    end
+    % The conmunication round ---------------------------------------------
+    
+    beta_estimated = util_Wcell2betamat(W_eastimated,m,d);
+    
+    
+end
+
+end
+function beta_estimated = util_Wcell2betamat(W,m,d)
+
+beta_estimated = zeros(m,d);
+for  mm = 1:m
+    
+    WW = cell2mat(W(mm));
+    beta_estimated(mm,:) = WW(1:d,d+1);
+    
+end
+
+end
